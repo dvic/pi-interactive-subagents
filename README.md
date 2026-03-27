@@ -46,6 +46,17 @@ zellij --session pi   # then run: pi
 ```
 
 Optional: set `PI_SUBAGENT_MUX=cmux|tmux|zellij` to force a specific backend.
+In tmux, subagents default to panes. To spawn them in windows instead, add this to `~/.pi/agent/settings.json` or `.pi/settings.json`:
+
+```json
+{
+  "subagents": {
+    "tmuxSurface": "window"
+  }
+}
+```
+
+Use `"pane"` to keep the default behavior.
 
 ## What's Included
 

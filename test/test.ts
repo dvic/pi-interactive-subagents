@@ -14,7 +14,7 @@ import {
   mergeNewEntries,
 } from "../pi-extension/subagents/session.ts";
 
-import { shellEscape, isCmuxAvailable } from "../pi-extension/subagents/cmux.ts";
+import { shellEscape, isCmuxAvailable, getTmuxSurfaceMode } from "../pi-extension/subagents/cmux.ts";
 
 // --- Helpers ---
 
@@ -247,6 +247,61 @@ describe("session.ts", () => {
 });
 
 describe("cmux.ts", () => {
+  describe("getTmuxSurfaceMode", () => {
+    let originalCwd: string;
+    let originalHome: string | undefined;
+    let homeDir: string;
+    let projectDir: string;
+
+    before(() => {
+      originalCwd = process.cwd();
+      originalHome = process.env.HOME;
+      homeDir = createTestDir();
+      projectDir = createTestDir();
+    });
+
+    after(() => {
+      process.chdir(originalCwd);
+      if (originalHome == null) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      rmSync(homeDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+    });
+
+    it("defaults to pane", () => {
+      process.chdir(projectDir);
+      process.env.HOME = homeDir;
+      assert.equal(getTmuxSurfaceMode(), "pane");
+    });
+
+    it("uses global settings when present", () => {
+      mkdirSync(join(homeDir, ".pi", "agent"), { recursive: true });
+      writeFileSync(
+        join(homeDir, ".pi", "agent", "settings.json"),
+        JSON.stringify({ subagents: { tmuxSurface: "window" } }),
+      );
+      process.chdir(projectDir);
+      process.env.HOME = homeDir;
+      assert.equal(getTmuxSurfaceMode(), "window");
+    });
+
+    it("lets project settings override global settings", () => {
+      mkdirSync(join(homeDir, ".pi", "agent"), { recursive: true });
+      mkdirSync(join(projectDir, ".pi"), { recursive: true });
+      writeFileSync(
+        join(homeDir, ".pi", "agent", "settings.json"),
+        JSON.stringify({ subagents: { tmuxSurface: "window" } }),
+      );
+      writeFileSync(
+        join(projectDir, ".pi", "settings.json"),
+        JSON.stringify({ subagents: { tmuxSurface: "pane" } }),
+      );
+      process.chdir(projectDir);
+      process.env.HOME = homeDir;
+      assert.equal(getTmuxSurfaceMode(), "pane");
+    });
+  });
+
   describe("shellEscape", () => {
     it("wraps in single quotes", () => {
       assert.equal(shellEscape("hello"), "'hello'");
