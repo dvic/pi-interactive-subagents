@@ -1,7 +1,7 @@
 import { execSync, execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { basename, join } from "node:path";
 
 const execFileAsync = promisify(execFile);
@@ -9,6 +9,8 @@ const execFileAsync = promisify(execFile);
 export type MuxBackend = "cmux" | "tmux" | "zellij";
 
 const commandAvailability = new Map<string, boolean>();
+
+export type TmuxSurfaceMode = "pane" | "window";
 
 function hasCommand(command: string): boolean {
   if (commandAvailability.has(command)) {
@@ -25,6 +27,32 @@ function hasCommand(command: string): boolean {
 
   commandAvailability.set(command, available);
   return available;
+}
+
+function normalizeTmuxSurfaceMode(value: unknown): TmuxSurfaceMode | null {
+  return value === "window" || value === "pane" ? value : null;
+}
+
+function readSettingsJson(path: string): any | null {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function getTmuxSurfaceMode(): TmuxSurfaceMode {
+  const envMode = normalizeTmuxSurfaceMode(process.env.PI_SUBAGENT_TMUX_SURFACE?.trim().toLowerCase());
+  if (envMode) return envMode;
+
+  const globalSettings = readSettingsJson(join(homedir(), ".pi", "agent", "settings.json"));
+  const projectSettings = readSettingsJson(join(process.cwd(), ".pi", "settings.json"));
+
+  const globalMode = normalizeTmuxSurfaceMode(globalSettings?.subagents?.tmuxSurface ?? globalSettings?.subagents?.tmuxSpawn);
+  const projectMode = normalizeTmuxSurfaceMode(projectSettings?.subagents?.tmuxSurface ?? projectSettings?.subagents?.tmuxSpawn);
+
+  return projectMode ?? globalMode ?? "pane";
 }
 
 function muxPreference(): MuxBackend | null {
@@ -165,6 +193,20 @@ async function zellijActionAsync(args: string[], surface?: string): Promise<stri
  * Returns an identifier (`surface:42` in cmux, `%12` in tmux, `pane:7` in zellij).
  */
 export function createSurface(name: string): string {
+  const backend = requireMuxBackend();
+
+  if (backend === "tmux" && getTmuxSurfaceMode() === "window") {
+    const windowId = execFileSync(
+      "tmux",
+      ["new-window", "-P", "-F", "#{window_id}", "-n", name, "-c", process.cwd()],
+      { encoding: "utf8" },
+    ).trim();
+    if (!windowId.startsWith("@")) {
+      throw new Error(`Unexpected tmux new-window output: ${windowId}`);
+    }
+    return windowId;
+  }
+
   return createSurfaceSplit(name, "right");
 }
 
@@ -435,7 +477,7 @@ export async function readScreenAsync(surface: string, lines = 50): Promise<stri
 }
 
 /**
- * Close a pane.
+ * Close a surface.
  */
 export function closeSurface(surface: string): void {
   const backend = requireMuxBackend();
@@ -448,7 +490,11 @@ export function closeSurface(surface: string): void {
   }
 
   if (backend === "tmux") {
-    execFileSync("tmux", ["kill-pane", "-t", surface], { encoding: "utf8" });
+    if (surface.startsWith("@")) {
+      execFileSync("tmux", ["kill-window", "-t", surface], { encoding: "utf8" });
+    } else {
+      execFileSync("tmux", ["kill-pane", "-t", surface], { encoding: "utf8" });
+    }
     return;
   }
 
